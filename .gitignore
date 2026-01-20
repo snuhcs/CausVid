@@ -206,3 +206,5 @@ VBench
 *.pt
 
 wan_models
+checkpoints
+output
