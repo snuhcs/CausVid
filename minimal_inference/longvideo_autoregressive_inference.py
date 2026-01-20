@@ -8,6 +8,8 @@ import argparse
 import torch
 import os
 
+from torch.profiler import profile, ProfilerActivity, record_function
+
 parser = argparse.ArgumentParser()
 parser.add_argument("--config_path", type=str)
 parser.add_argument("--checkpoint_folder", type=str)
@@ -58,31 +60,41 @@ for prompt_index in tqdm(range(len(dataset))):
     start_latents = None
     all_video = []
 
-    for rollout_index in range(num_rollout):
-        sampled_noise = torch.randn(
-            [1, 21, 16, 60, 104], device="cuda", dtype=torch.bfloat16
-        )
+    torch.cuda.memory._record_memory_history()
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+        record_shapes=True,
+        profile_memory=True,
+    ) as prof:
+        with record_function("autoregressive_inference"):
+            for rollout_index in range(num_rollout):
+                sampled_noise = torch.randn(
+                    [1, 21, 16, 60, 104], device="cuda", dtype=torch.bfloat16
+                )
 
-        video, latents = pipeline.inference(
-            noise=sampled_noise,
-            text_prompts=prompts,
-            return_latents=True,
-            start_latents=start_latents
-        )
+                video, latents = pipeline.inference(
+                    noise=sampled_noise,
+                    text_prompts=prompts,
+                    return_latents=True,
+                    start_latents=start_latents
+                )
 
-        current_video = video[0].permute(0, 2, 3, 1).cpu().numpy()
+                current_video = video[0].permute(0, 2, 3, 1).cpu().numpy()
 
-        start_frame = encode(pipeline.vae, (
-            video[:, -4 * (args.num_overlap_frames - 1) - 1:-4 * (args.num_overlap_frames - 1), :] * 2.0 - 1.0
-        ).transpose(2, 1).to(torch.bfloat16)).transpose(2, 1).to(torch.bfloat16)
+                start_frame = encode(pipeline.vae, (
+                    video[:, -4 * (args.num_overlap_frames - 1) - 1:-4 * (args.num_overlap_frames - 1), :] * 2.0 - 1.0
+                ).transpose(2, 1).to(torch.bfloat16)).transpose(2, 1).to(torch.bfloat16)
 
-        start_latents = torch.cat(
-            [start_frame, latents[:, -(args.num_overlap_frames - 1):]], dim=1
-        )
+                start_latents = torch.cat(
+                    [start_frame, latents[:, -(args.num_overlap_frames - 1):]], dim=1
+                )
 
-        all_video.append(current_video[:-(4 * (args.num_overlap_frames - 1) + 1)])
+                all_video.append(current_video[:-(4 * (args.num_overlap_frames - 1) + 1)])
 
-    video = np.concatenate(all_video, axis=0)
+            video = np.concatenate(all_video, axis=0)
+
+    torch.cuda.memory._dump_snapshot(os.path.join(args.output_folder, f"long_video_memory_snapshot_{prompt_index:03d}.json"))
+    prof.export_chrome_trace(os.path.join(args.output_folder, f"long_video_output_{prompt_index:03d}.json"))
 
     export_to_video(
         video, os.path.join(args.output_folder, f"long_video_output_{prompt_index:03d}.mp4"), fps=16)
