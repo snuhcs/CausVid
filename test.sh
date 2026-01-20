@@ -1,1 +1,0 @@
-python minimal_inference/autoregressive_inference.py --config_path configs/wan_causal_dmd.yaml --checkpoint_folder /models/CausVid/checkpoints/autoregressive_checkpoint/ --output_folder output --prompt_file_path ./sample_dataset/parti_prompts.txt
